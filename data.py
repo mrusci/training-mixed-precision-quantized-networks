@@ -53,5 +53,3 @@ def get_num_classes(name):
         return  100
     elif name == 'imagenet':
         return 1000  
-    elif name == 'graincam': 
-        return 4
