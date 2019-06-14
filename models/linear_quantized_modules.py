@@ -239,9 +239,12 @@ class ScaledClippedLinearQuantizationChannel(nn.Module):
         self.inplace = inplace
 
     def forward(self, input):
-        input = input.mul(self.M_ZERO.unsqueeze(0).unsqueeze(2).unsqueeze(2).expand(input.size()))
-        input = input.mul(self.N_ZERO.unsqueeze(0).unsqueeze(2).unsqueeze(2).expand(input.size())).floor() #round
-        input = clamp(input, 0, self.clip_val, self.inplace)
+        if self.clip_val is not False:
+            input = input.mul(self.M_ZERO.unsqueeze(0).unsqueeze(2).unsqueeze(2).expand(input.size()))
+            input = input.mul(self.N_ZERO.unsqueeze(0).unsqueeze(2).unsqueeze(2).expand(input.size())).floor() #round
+            input = clamp(input, 0, self.clip_val, self.inplace)
+        else:
+            input = input.mul(self.M_ZERO).mul(self.N_ZERO)
         return input
 
     def __repr__(self):

@@ -181,7 +181,7 @@ class QuantOp():
                             if type(module) == nn.Linear:
                                 print('PerLayerAsymPACT chennel with ICN on last layer')
                                 out_ch = weight.size(0)
-                                quant_act = ScaledClippedLinearQuantizationChannelBias(out_ch, clip_val=False, bias=False)
+                                quant_act = ScaledClippedLinearQuantizationChannel(out_ch, clip_val=False)
                                 layer_quant_descr['quant_act'] = quant_act
                                 modules_quant.append(quant_act)
 
@@ -307,55 +307,6 @@ class QuantOp():
         ''' Applying clipping before linear quantization     '''
         data_tensor.clamp_(min_value, max_value)
         return self._linear_asymmetric_quant_args(data_tensor, n_bits) 
-
-    def compute_thresholds(self, conv_layer, batch_layer, a_bits, a_min, a_max, S_a_i, S_w, first=False ):
-        ''' 
-        Compute integer activation thresholds 
-        '''
-        # compute thresholds
-        print('A bits: ', a_bits, ' | a_min: ',a_min, ' | a_max: ', a_max)
-        bias = conv_layer.bias
-        eps = batch_layer.eps
-        mean = batch_layer.running_mean
-        if bias is not None:
-            mean += bias.data
-        std = batch_layer.running_var.add(eps).sqrt()
-        gamma = batch_layer.weight.data
-        beta = batch_layer.bias.data
-        
-        #dim of channels
-        dim = gamma.size(0)
-        n_thresholds = 2**a_bits -1
-        thresholds = torch.arange(n_thresholds).unsqueeze(0).expand(dim, n_thresholds).type_as(gamma)
-        signs = gamma.new_empty(dim)
-
-        #quantizer factors
-        step_thr = (a_max-a_min)/n_thresholds
-        offset_thr = a_min+step_thr/2
-        scale = S_a_i * S_w
-
-        #compute thresholds
-        thresholds = thresholds.mul(step_thr).add(offset_thr)
-
-        for i in range(dim):
-            if  abs(std[i]/gamma[i]) > 1e30:
-                #sign += '2, '
-                print('Ratio = ', abs(std[i]/gamma[i]), 'layer=', i )
-                pass
-            elif gamma[i] > 0:
-                signs[i] = 1
-            else:
-                signs[i] = 0
-
-            thr_array = []
-            for j in range(n_thresholds):
-                thr = ( mean[i]+((thresholds[i,j]-beta[i])*(std[i]/gamma[i])) ) / scale
-                if not first:
-                    thresholds[i,j] = math.floor( thr )
-                else:
-                    thresholds[i,j] = thr
-
-        return signs, thresholds
 
 
     def _get_BN_scale_factors(self, batch_layer):
@@ -521,14 +472,6 @@ class QuantOp():
                 batch_layer.weight.requires_grad = False
                 batch_layer.bias.requires_grad = False
 
-                if torch.isnan(batch_layer.running_mean).sum() > 0:
-                    print('Runnin Mean of layer ',i_l)
-                    print(batch_layer.running_mean)
-
-                if torch.isnan(batch_layer.running_var).sum() > 0:
-                    print('Runnin Var of layer ',i_l)
-                    print(batch_layer.running_var)
-
 
             # manage min/max params when activate batch folding into weights
             if quant_type == 'PerLayerAsymPACT' and change_fold_mode and layer['fold_type'] == 'folding_weights' and layer['batch_norm'] is not None:
@@ -677,7 +620,7 @@ class QuantOp():
                 weight_tensor[v] = weight_tensor[v].clamp(w_min_ext[v].item(), w_max_ext[v].item() )
 
         if not get_quantized:
-            return weight_tensor, bias_tensor, w_min_value_mat, w_max_value_mat
+            return weight_tensor, bias_tensor
         
         # 2- quantization
         range_mat = w_max_value_mat - w_min_value_mat
@@ -824,7 +767,6 @@ class QuantOp():
                         range_w = 1
                     S_w = range_w / n_levels_w
 
-                    print('Layer: ',i_l,' | Sw: ', S_w )
 
                     weight_quant_tensor = weight_tensor.div(S_w).round()
                     layer['quant_conv'].weight.data.copy_( weight_quant_tensor )
@@ -835,7 +777,6 @@ class QuantOp():
                         bias_quant_tensor = bias_tensor.round().clamp(-2**(BIAS_BITS-1),2**(BIAS_BITS-1)-1)
 
                         layer['quant_conv'].bias = nn.Parameter(bias_quant_tensor, requires_grad = False)
-                        print('Layer: ',i_l,' | Quant Bias Tensor - Error: ', (bias_quant_tensor - bias_tensor).abs().sum() )
 
 
         ###################################          OTHERS layers       #############################################
@@ -906,7 +847,6 @@ class QuantOp():
                     if range_w == 0:
                         range_w = 1
                     S_w = range_w / n_levels_w
-                    print('Layer: ',i_l,' | Sw: ', S_w )
                     weight_quant_tensor = weight_tensor.div(S_w).round()
                     layer['quant_conv'].weight.data.copy_( weight_quant_tensor )
 
@@ -924,21 +864,14 @@ class QuantOp():
 
 
                         bias_tensor = bias_tensor.add(beta_tensor/gamma_over_sigma).div(S_a_i*S_w)  #assume INT8
-                        print('Layer: ',i_l,' | Quant Bias Tensor - min: ', bias_tensor.min(),'- max: ', bias_tensor.max())
-                        print('Layer: ',i_l,' | Gamma over sigma: ', gamma_over_sigma)
-
                         bias_quant_tensor = bias_tensor.round().clamp(-2**(BIAS_BITS-1),2**(BIAS_BITS-1)-1)
-                        print('Layer: ',i_l,' | Quant Bias Tensor - Error: ', (bias_quant_tensor - bias_tensor).abs().sum() )
 
                         layer['quant_conv'].bias = nn.Parameter(bias_quant_tensor, requires_grad = False)
 
                         gamma_over_sigma = gamma_over_sigma.mul((S_a_i*S_w)/S_a_o)
                         M0, n_exp = self._get_m0_nexp_vect(gamma_over_sigma )
-                        print('Layer: ',i_l,' | M0: ', M0.min(), M0.max(),'- n_exp: ', n_exp.min(), n_exp.max())
-
                         M0 = M0.mul(2**(M0_BITS-1)).round().clamp(-2**(M0_BITS-1),2**(M0_BITS-1)-1).div(2**(M0_BITS-1))   #assume Q.1.31
                         n_exp = n_exp.clamp(-2**(N0_BITS-1),2**(N0_BITS-1)-1  )
-                        print('Layer: ',i_l,' | Error: ', ((M0*2**n_exp)-gamma_over_sigma).abs().sum()  )
 
 
                         layer['quant_act'].M_ZERO = M0
@@ -952,7 +885,6 @@ class QuantOp():
                             bias_tensor = bias_tensor.div(S_w*S_a_i)
                             bias_quant_tensor = bias_tensor.round().clamp(-2**(BIAS_BITS-1),2**(BIAS_BITS-1)-1)
                             layer['quant_conv'].bias = nn.Parameter(bias_quant_tensor, requires_grad = False)
-                            print('Layer: ',i_l,' | Quant Bias Tensor - Error: ', (bias_quant_tensor - bias_tensor).abs().sum() )
 
                         else:
                             layer['quant_conv'].bias = None
@@ -960,10 +892,8 @@ class QuantOp():
                         Z_w = -weight_quant_tensor.min().item()
 
                         M0, n_exp = self._get_m0_nexp((S_a_i*S_w)/S_a_o ) 
-                        print('Layer PerLayerAsymPACT: ',i_l,' | M0: ', M0,'- n_exp: ', n_exp)
                         M0 = np.clip(np.round(M0*2**(M0_BITS-1)),-2**(M0_BITS-1),2**(M0_BITS-1)-1) / 2**(M0_BITS-1)
                         n_exp = np.clip(n_exp,-2**(N0_BITS-1),2**(N0_BITS-1)-1  )
-                        print('Layer PerLayerAsymPACT: ',i_l,' | Error: ', ((M0.tolist()*2**n_exp.tolist())-((S_a_i*S_w)/S_a_o) )  )
 
                         layer['quant_act'].M_ZERO = M0.tolist()
                         layer['quant_act'].N_ZERO = n_exp.tolist()

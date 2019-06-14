@@ -16,7 +16,7 @@ Please, cite this paper [arXiv](https://arxiv.org/abs/1905.13082) when using the
 ```
 
 ### Questions
-For any question or inquiries, just drop me an [email](mailto:manuele.rusci@unibo.it). 
+For any question just drop me an [email](mailto:manuele.rusci@unibo.it). 
 
 ## Getting Started
 
@@ -39,7 +39,7 @@ $ source download_pretrained_mobilenet.sh
 ### Quickstart
 For quantization-aware retraining of a 8-bit integer only mobilenet model type:
 ```
-$ python3 main_binary.py -a mobilenet --mobilenet_width 1.0 --mobilenet_input 224 --save Imagenet/mobilenet_224_1.0_w8a8 --dataset imagenet --type_quant 'PerLayerAsymPACT' --weight_bits 8 --activ_bits 8 --activ_type learned --gpus 0,1,2,3 -j 8 --epochs 12 -b 128 --save_check --quantizer --batch_fold_delay 1 --batch_fold_type folding_weight
+$ python3 main_binary.py -a mobilenet --mobilenet_width 1.0 --mobilenet_input 224 --save Imagenet/mobilenet_224_1.0_w8a8 --dataset imagenet --type_quant 'PerLayerAsymPACT' --weight_bits 8 --activ_bits 8 --activ_type learned --gpus 0,1,2,3 -j 8 --epochs 12 -b 128 --save_check --quantizer --batch_fold_delay 1 --batch_fold_type folding_weights
 ```
 
 ### Quantization Options
